@@ -41,13 +41,10 @@ def main(argv):
     model = model3.extend(model2)"""
     
     model2 = train2(train_set1.sentences)
-    #print train_set1.sentences
-    time.sleep(10)
     model = train3(train_set2.sentences)
-    #print train_set2.sentences
-    time.sleep(10)
     model.append(model2[0])
     model.append(model2[1])
+    model.append(model2[2])
 
     handle = codecs.open(argv[2], 'w', 'utf-8')
     handle.write('<?xml version="1.0" encoding="UTF-8" ?>\n')
@@ -70,6 +67,35 @@ def add_one(dic, value):
     if not dic.has_key(value):
         dic[value] = 0.0
     dic[value] += 1.0
+
+def hiragana(char):
+    if ord(char) >= 0x3040 and ord(char) <= 0x309F:
+        return True
+    else:
+        return False
+
+def katakana(char):
+    if ord(char) >= 0x30A0 and ord(char) <= 0x30FF:
+        return True
+    else:
+        return False
+
+def romaji(char):
+    if ord(char) >= 0xFF01 and ord(char) <= 0xFFEF:
+        return True
+    else:
+        return False
+
+def get_alphabet(char):
+    if katakana(char):
+        return 'katakana'
+    elif hiragana(char):
+        return 'hiragana'
+    elif romaji(char):
+        return 'romaji'
+    else:
+        return 'kanji'
+
 ################################################################################
 
 
@@ -132,6 +158,26 @@ def train2(sentences):
 
     observation_prob = {}
     state_trans_prob = {}
+    alphabet_trans_prob = {'hiragana':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'katakana':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'romaji':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'kanji':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}}
 
     # Iterates through the sentences
     for sentence in sentences:
@@ -147,6 +193,8 @@ def train2(sentences):
             observation = annotated_sequence[i:i+3]
             bigram = observation[0]+observation[2]
             current_state = observation[1]
+
+            alphabet_trans_prob[get_alphabet(observation[0])][get_alphabet(observation[2])][current_state] += 1
 
             if not observation_prob.has_key(bigram):
                 observation_prob[bigram] = {'c': 0.0, 'b': 0.0}
@@ -170,7 +218,18 @@ def train2(sentences):
     for t in state_trans_prob:
         state_trans_prob[t] /= norm_factor
     
-    return [observation_prob, state_trans_prob]
+    # Normalize alphabet transition probabilities
+    norm_factor = 0.0
+    for i in alphabet_trans_prob.keys():
+        for j in alphabet_trans_prob[i].keys():
+            for k in alphabet_trans_prob[i][j].keys():
+                norm_factor += alphabet_trans_prob[i][j][k]
+    for i in alphabet_trans_prob.keys():
+        for j in alphabet_trans_prob[i].keys():
+            for k in alphabet_trans_prob[i][j].keys():
+                alphabet_trans_prob[i][j][k] /= norm_factor
+    
+    return [observation_prob, state_trans_prob, alphabet_trans_prob]
 ################################################################################
 
 ################################################################################
@@ -238,9 +297,10 @@ def word_segmentation(model, sentence):
     
     observation_prob2 = model[2]
     state_trans_prob2 = model[3]
+    alphabet_trans_prob = model[4]
 
     unseen_prob_c = 0.01
-    unseen_prob_b = 0.01
+    unseen_prob_b = 0.02
 
     observations = []
     lattice = []
@@ -267,7 +327,9 @@ def word_segmentation(model, sentence):
                 lattice[-1]['b'] = max(unseen_prob_b, lattice[-1]['b'])
                 isTrigram.append(False)
             else:
-                lattice.append({'c': unseen_prob_c, 'b': unseen_prob_b})
+                lattice.append(alphabet_trans_prob[get_alphabet(trigram[1])][get_alphabet(trigram[2])])
+                lattice[-1]['c'] = max(unseen_prob_c, lattice[-1]['c'])
+                lattice[-1]['b'] = max(unseen_prob_b, lattice[-1]['b'])
                 isTrigram.append(False)
 
     # Use viterbi to decode the lattice

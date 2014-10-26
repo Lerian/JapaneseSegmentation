@@ -15,10 +15,6 @@
     A HMM Japanese segmenter.
 """
 
-"""
-    Calcul de la proba supérieure entre les c et b pour les cas non observés
-"""
-
 import re
 import sys
 import xml.sax
@@ -61,6 +57,35 @@ def add_one(dic, value):
     if not dic.has_key(value):
         dic[value] = 0.0
     dic[value] += 1.0
+
+def hiragana(char):
+    if ord(char) >= 0x3040 and ord(char) <= 0x309F:
+        return True
+    else:
+        return False
+
+def katakana(char):
+    if ord(char) >= 0x30A0 and ord(char) <= 0x30FF:
+        return True
+    else:
+        return False
+
+def romaji(char):
+    if ord(char) >= 0xFF01 and ord(char) <= 0xFFEF:
+        return True
+    else:
+        return False
+
+def get_alphabet(char):
+    if katakana(char):
+        return 'katakana'
+    elif hiragana(char):
+        return 'hiragana'
+    elif romaji(char):
+        return 'romaji'
+    else:
+        return 'kanji'
+
 ################################################################################
 
 
@@ -125,7 +150,26 @@ def train(sentences):
 
     observation_prob = {}
     state_trans_prob = {}
-    unseen_prob = {'c': 0.0, 'b': 0.0}
+    alphabet_trans_prob = {'hiragana':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'katakana':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'romaji':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}, \
+                            'kanji':{ \
+                                'katakana':{'c':0,'b':0}, \
+                                'romaji':{'c':0,'b':0}, \
+                                'kanji':{'c':0,'b':0}, \
+                                'hiragana':{'c':0,'b':0}}}
 
     # Iterates through the sentences
     for sentence in sentences:
@@ -136,12 +180,13 @@ def train(sentences):
 
         previous_state = ''
         current_state = ''
-        
+
         for i in range(0, len(annotated_sequence)-1, 2):
             observation = annotated_sequence[i:i+3]
             bigram = observation[0]+observation[2]
             current_state = observation[1]
-            unseen_prob[current_state] += 1.0
+
+            alphabet_trans_prob[get_alphabet(observation[0])][get_alphabet(observation[2])][current_state] += 1
 
             if not observation_prob.has_key(bigram):
                 observation_prob[bigram] = {'c': 0.0, 'b': 0.0}
@@ -165,13 +210,18 @@ def train(sentences):
     for t in state_trans_prob:
         state_trans_prob[t] /= norm_factor
     
-    sum_unseen = unseen_prob['c']+unseen_prob['b']
-    unseen_prob['c'] = unseen_prob['c']/sum_unseen
-    unseen_prob['b'] = unseen_prob['b']/sum_unseen
+    # Normalize alphabet transition probabilities
+    norm_factor = 0.0
+    for i in alphabet_trans_prob.keys():
+        for j in alphabet_trans_prob[i].keys():
+            for k in alphabet_trans_prob[i][j].keys():
+                norm_factor += alphabet_trans_prob[i][j][k]
+    for i in alphabet_trans_prob.keys():
+        for j in alphabet_trans_prob[i].keys():
+            for k in alphabet_trans_prob[i][j].keys():
+                alphabet_trans_prob[i][j][k] /= norm_factor
     
-    
-    
-    return [observation_prob, state_trans_prob, unseen_prob]
+    return [observation_prob, state_trans_prob, alphabet_trans_prob]
 ################################################################################
 
 
@@ -182,11 +232,9 @@ def word_segmentation(model, sentence):
 
     observation_prob = model[0]
     state_trans_prob = model[1]
+    alphabet_trans_prob = model[2]
 
-    unseen_prob_c = model[2]['c']
-    unseen_prob_b = model[2]['b']
-
-    print "probs: c=%f b=%f" % (unseen_prob_c,unseen_prob_b)
+    unseen_prob = 0.01
 
     observations = []
     lattice = []
@@ -197,11 +245,14 @@ def word_segmentation(model, sentence):
 
         if observation_prob.has_key(bigram):
             lattice.append(observation_prob[bigram])
-            lattice[-1]['c'] = max(unseen_prob_c, lattice[-1]['c'])
-            lattice[-1]['b'] = max(unseen_prob_b, lattice[-1]['b'])
+            lattice[-1]['c'] = max(unseen_prob, lattice[-1]['c'])
+            lattice[-1]['b'] = max(unseen_prob, lattice[-1]['b'])
         else:
-            lattice.append({'c': unseen_prob_c, 'b': unseen_prob_b})
-
+            #lattice.append({'c': unseen_prob, 'b': unseen_prob})
+            lattice.append(alphabet_trans_prob[get_alphabet(bigram[0])][get_alphabet(bigram[1])])
+            lattice[-1]['c'] = max(unseen_prob, lattice[-1]['c'])
+            lattice[-1]['b'] = max(unseen_prob, lattice[-1]['b'])
+            
     # Use viterbi to decode the lattice
 
     # Initialisation
